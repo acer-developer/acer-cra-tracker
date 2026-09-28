@@ -1,0 +1,35 @@
+name: CRA ingest
+
+# Daily incremental pull for all agencies; manual backfill from the Actions tab.
+on:
+  schedule:
+    - cron: "30 2 * * *"   # 08:00 IST daily
+  workflow_dispatch:
+    inputs:
+      agency:
+        description: "Agency code or ALL"
+        default: "ALL"
+      mode:
+        description: "backfill or incremental"
+        default: "incremental"
+      max_pages:
+        description: "Max listing pages"
+        default: "2"
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r scraper/requirements.txt
+      - name: Run ingestion
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m scraper.run \
+            --agency "${{ github.event.inputs.agency || 'ALL' }}" \
+            --mode "${{ github.event.inputs.mode || 'incremental' }}" \
+            --max-pages "${{ github.event.inputs.max_pages || 2 }}"
