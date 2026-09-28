@@ -4,18 +4,35 @@ export const dynamic = "force-dynamic";
 
 const fmt = (n: number) => n.toLocaleString("en-IN");
 
+type AgencyCount = { agency: string; count: number };
+
+async function loadOverview() {
+  // Before the DB is provisioned / migrated, every query throws. Degrade to the
+  // empty state instead of a 500 so the deploy is viewable immediately.
+  try {
+    const [total, entities, incCount, byAgency, latest] = await Promise.all([
+      prisma.ratingAction.count(),
+      prisma.entity.count(),
+      prisma.ratingAction.count({ where: { isInc: true } }),
+      prisma.ratingAction.groupBy({ by: ["agency"], _count: { _all: true } }),
+      prisma.ratingAction.findMany({
+        orderBy: [{ ratingDate: { sort: "desc", nulls: "last" } }],
+        take: 15,
+      }),
+    ]);
+    return { total, entities, incCount, byAgency, latest, dbError: false as const };
+  } catch {
+    return {
+      total: 0, entities: 0, incCount: 0,
+      byAgency: [] as { agency: string; _count: { _all: number } }[],
+      latest: [] as Awaited<ReturnType<typeof prisma.ratingAction.findMany>>,
+      dbError: true as const,
+    };
+  }
+}
+
 export default async function Overview() {
-  // Read straight from the DB in this server component (no self-fetch needed).
-  const [total, entities, incCount, byAgency, latest] = await Promise.all([
-    prisma.ratingAction.count(),
-    prisma.entity.count(),
-    prisma.ratingAction.count({ where: { isInc: true } }),
-    prisma.ratingAction.groupBy({ by: ["agency"], _count: { _all: true } }),
-    prisma.ratingAction.findMany({
-      orderBy: [{ ratingDate: { sort: "desc", nulls: "last" } }],
-      take: 15,
-    }),
-  ]);
+  const { total, entities, incCount, byAgency, latest, dbError } = await loadOverview();
 
   const agencies = byAgency
     .map((r) => ({ agency: r.agency, count: r._count._all }))
@@ -31,7 +48,13 @@ export default async function Overview() {
         press releases. Counts reflect what has been ingested.
       </p>
 
-      {total === 0 ? (
+      {dbError ? (
+        <div className="empty">
+          Database not reachable yet. Set <code>DATABASE_URL</code> and{" "}
+          <code>DIRECT_URL</code> (Vercel env vars) and run <code>npm run db:push</code> to
+          create the tables, then refresh.
+        </div>
+      ) : total === 0 ? (
         <div className="empty">
           No data yet. Run the ingestion pipeline (see <code>scraper/README.md</code>) to
           populate the database, then refresh.
